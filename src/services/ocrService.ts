@@ -1,4 +1,4 @@
-import { createWorker, type Worker } from 'tesseract.js'
+import { createWorker, PSM, type Worker } from 'tesseract.js'
 import { parseLocaleNumber, round2 } from '../utils/currency'
 import type { FieldConfidence } from '../types'
 
@@ -60,6 +60,9 @@ export async function terminateOcrWorker(): Promise<void> {
 
 export async function runOcr(image: Blob | string, onProgress?: (pct: number) => void): Promise<OcrResult> {
   const worker = await getWorker(onProgress)
+  // Fişler dar, tek sütunluk metin şeritleridir; SINGLE_COLUMN modu Tesseract'ın
+  // arka plan gürültüsünü sütun/blok olarak yanlış yorumlamasını engelleyip doğruluğu artırır.
+  await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_COLUMN })
   const { data } = await worker.recognize(image, {}, { text: true })
   onProgress?.(100)
   const text = data.text || ''
@@ -154,15 +157,33 @@ function findPaymentMethod(text: string): OcrExtractedField<string> | undefined 
   return undefined
 }
 
+/** OCR gürültüsünden (rastgele sembol/karakter dizileri) gelen anlamsız metinleri elemek için */
+function isPlausibleText(line: string): boolean {
+  const letters = (line.match(/[A-Za-zÇĞİÖŞÜçğıöşü]/g) ?? []).length
+  const letterRatio = letters / line.length
+  if (letterRatio < 0.55) return false
+  // Art arda gelen tek harf + boşluk grupları (OCR gürültüsünün tipik izi) çok fazlaysa reddet
+  const words = line.split(/\s+/).filter(Boolean)
+  const singleCharWords = words.filter((w) => w.length === 1).length
+  if (words.length > 0 && singleCharWords / words.length > 0.4) return false
+  return true
+}
+
 function findCompanyName(text: string): OcrExtractedField<string> | undefined {
   const lines = text
     .split('\n')
     .map((l) => l.trim())
     .filter((l) => l.length > 2)
-  // İlk birkaç satırda genelde firma adı bulunur; çok sayıda rakam içeren satırları ele
+  // İlk birkaç satırda genelde firma adı bulunur; çok sayıda rakam içeren veya anlamsız satırları ele
   for (const line of lines.slice(0, 6)) {
     const digitRatio = (line.match(/\d/g)?.length ?? 0) / line.length
-    if (digitRatio < 0.3 && line.length >= 3 && line.length <= 60 && !/^(FİŞ|FIS|SAAT|TARİH|TARIH)/i.test(line)) {
+    if (
+      digitRatio < 0.3 &&
+      line.length >= 3 &&
+      line.length <= 60 &&
+      !/^(FİŞ|FIS|SAAT|TARİH|TARIH)/i.test(line) &&
+      isPlausibleText(line)
+    ) {
       return { value: line, confidence: 'low' }
     }
   }

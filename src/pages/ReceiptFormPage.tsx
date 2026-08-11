@@ -6,7 +6,7 @@ import { VatRateSection } from '../components/receipts/VatRateSection'
 import { ZoomableImage } from '../components/receipts/ZoomableImage'
 import { CreatableSelect } from '../components/ui/CreatableSelect'
 import { DuplicateWarningModal } from '../components/receipts/DuplicateWarningModal'
-import { compressImage } from '../services/imageCompression'
+import { compressImage, preprocessForOcr } from '../services/imageCompression'
 import { runOcr, type OcrResult } from '../services/ocrService'
 import {
   createReceipt,
@@ -148,7 +148,8 @@ export function ReceiptFormPage() {
 
       setOcrRunning(true)
       setOcrProgress(0)
-      const result = await runOcr(compressed, setOcrProgress)
+      const ocrInput = await preprocessForOcr(file)
+      const result = await runOcr(ocrInput, setOcrProgress)
       applyOcrResult(result)
       showToast('OCR tamamlandı. Alanları kontrol edip düzenleyebilirsiniz.', 'success')
     } catch (err) {

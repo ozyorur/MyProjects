@@ -50,6 +50,10 @@ export function ReceiptCapture({ onFileSelected, onSkip }: ReceiptCaptureProps) 
         <input ref={galleryRef} type="file" accept={ACCEPTED_IMAGE} className="hidden" onChange={handleChange} />
         <input ref={fileRef} type="file" accept={ACCEPTED_ALL} className="hidden" onChange={handleChange} />
 
+        <p className="mt-5 text-xs text-slate-400">
+          İpucu: Daha iyi OCR sonucu için fişi düz bir zemine koyup iyi ışıkta, karesel açıdan ve tüm fiş kareye sığacak şekilde çekin.
+        </p>
+
         {onSkip && (
           <button onClick={onSkip} className="mt-5 text-sm font-medium text-slate-400 underline decoration-slate-300 underline-offset-4 hover:text-slate-600 dark:hover:text-slate-300">
             Fotoğrafsız devam et, manuel gir
