@@ -131,19 +131,37 @@ function findBelgeNo(text: string): OcrExtractedField<string> | undefined {
   return undefined
 }
 
-function findTotal(text: string): OcrExtractedField<number> | undefined {
-  const patterns = [
-    /GENEL\s*TOPLAM\s*[:\-]?\s*\**\s*([\d.,]+)/i,
-    /TOPLAM\s*TL\s*[:\-]?\s*\**\s*([\d.,]+)/i,
-    /\bTOPLAM\b\s*[:\-]?\s*\**\s*([\d.,]+)/i,
-    /\bTUTAR\b\s*[:\-]?\s*\**\s*([\d.,]+)/i,
-  ]
-  for (const p of patterns) {
-    const m = text.match(p)
-    if (m) {
-      const val = parseLocaleNumber(m[1])
-      if (val > 0) return { value: round2(val), confidence: 'high' }
+// Ondalıklı bir para tutarına benzeyen ilk deseni yakalar (virgül veya nokta ile 2 basamak).
+// Anahtar kelime ile tutar arasında OCR'ın "*" gibi işaretleri neye çevirdiği önemli değildir.
+const AMOUNT_PATTERN = /\d{1,3}(?:[.,]\d{3})*[.,]\d{2}\b/
+
+/** Belirtilen anahtar kelimeyi içeren satırda veya ondan sonraki 1-2 satırda bir tutar arar */
+function extractAmountNear(text: string, keyword: RegExp): number | undefined {
+  const lines = text.split('\n').map((l) => l.trim())
+  for (let i = 0; i < lines.length; i++) {
+    if (!keyword.test(lines[i])) continue
+    for (let j = i; j <= Math.min(i + 2, lines.length - 1); j++) {
+      const m = lines[j].match(AMOUNT_PATTERN)
+      if (m) {
+        const val = parseLocaleNumber(m[0])
+        if (val > 0) return round2(val)
+      }
     }
+  }
+  return undefined
+}
+
+function findTotal(text: string): OcrExtractedField<number> | undefined {
+  const keywordsByPriority = [
+    /GENEL\s*TOPLAM/i,
+    /TOPLAM\s*TUTAR/i,
+    /[ÖO]DENEN\s*TUTAR/i,
+    /\bTOPLAM\b/i,
+    /\bTUTAR\b/i,
+  ]
+  for (const keyword of keywordsByPriority) {
+    const val = extractAmountNear(text, keyword)
+    if (val !== undefined) return { value: val, confidence: 'high' }
   }
   return undefined
 }
@@ -194,12 +212,8 @@ function findVatBreakdown(text: string): { oran: 1 | 10 | 20; dahilTutar: number
   const results: { oran: 1 | 10 | 20; dahilTutar: number }[] = []
   const rates: (1 | 10 | 20)[] = [1, 10, 20]
   for (const rate of rates) {
-    const re = new RegExp(`KDV\\s*%?\\s*${rate}\\b[^\\d]{0,15}([\\d.,]+)`, 'i')
-    const m = text.match(re)
-    if (m) {
-      const val = parseLocaleNumber(m[1])
-      if (val > 0) results.push({ oran: rate, dahilTutar: round2(val) })
-    }
+    const val = extractAmountNear(text, new RegExp(`KDV\\s*%?\\s*${rate}\\b`, 'i'))
+    if (val !== undefined) results.push({ oran: rate, dahilTutar: val })
   }
   return results
 }
