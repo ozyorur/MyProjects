@@ -17,7 +17,16 @@ export interface OcrResult {
   saat?: OcrExtractedField<string>
   toplamTutar?: OcrExtractedField<number>
   odemeYontemi?: OcrExtractedField<string>
-  kdvOranTutarlari: { oran: 1 | 10 | 20; dahilTutar: number }[]
+  kdvOranTutarlari: OcrVatItem[]
+}
+
+export interface OcrVatItem {
+  oran: 1 | 10 | 20
+  /** Bu oran için KDV dahil tutar (yalnızca oran-bazlı satır bulunduğunda) */
+  dahilTutar?: number
+  /** Fişte tek bir birleşik KDV tutarı varsa (oran belirtilmeden), doğrudan okunan matrah/KDV */
+  matrah?: number
+  tutar?: number
 }
 
 let workerPromise: Promise<Worker> | null = null
@@ -208,8 +217,9 @@ function findCompanyName(text: string): OcrExtractedField<string> | undefined {
   return undefined
 }
 
-function findVatBreakdown(text: string): { oran: 1 | 10 | 20; dahilTutar: number }[] {
-  const results: { oran: 1 | 10 | 20; dahilTutar: number }[] = []
+/** Fişte "KDV %20 ..." gibi oranı açıkça yazılmış satırlar varsa bunları bulur */
+function findVatBreakdown(text: string): OcrVatItem[] {
+  const results: OcrVatItem[] = []
   const rates: (1 | 10 | 20)[] = [1, 10, 20]
   for (const rate of rates) {
     const val = extractAmountNear(text, new RegExp(`KDV\\s*%?\\s*${rate}\\b`, 'i'))
@@ -218,7 +228,48 @@ function findVatBreakdown(text: string): { oran: 1 | 10 | 20; dahilTutar: number
   return results
 }
 
+/** "TOPKDV" / "TOPLAM KDV" gibi orana göre ayrılmamış tek bir birleşik KDV tutarı arar */
+function findCombinedVat(text: string): number | undefined {
+  return extractAmountNear(text, /TOP\s*KDV|TOPLAM\s*KDV/i)
+}
+
+/**
+ * Türkiye'de KDV yalnızca %1, %10 veya %20 olabilir. Fişte oran açıkça yazmasa bile,
+ * toplam tutar ile toplam KDV biliniyorsa örtük oran hesaplanıp en yakın resmi orana
+ * (2.5 puan toleransla) eşlenir.
+ */
+function inferVatRateBucket(toplam: number, kdv: number): 1 | 10 | 20 | undefined {
+  const matrah = toplam - kdv
+  if (kdv <= 0 || matrah <= 0) return undefined
+  const impliedRatePct = (kdv / matrah) * 100
+  const candidates: (1 | 10 | 20)[] = [1, 10, 20]
+  let best: 1 | 10 | 20 | undefined
+  let bestDiff = Infinity
+  for (const c of candidates) {
+    const diff = Math.abs(impliedRatePct - c)
+    if (diff < bestDiff) {
+      bestDiff = diff
+      best = c
+    }
+  }
+  return bestDiff <= 2.5 ? best : undefined
+}
+
 export function parseReceiptText(rawText: string): OcrResult {
+  const toplamTutar = findTotal(rawText)
+  let kdvOranTutarlari = findVatBreakdown(rawText)
+
+  // Oran-bazlı bir satır bulunamadıysa, birleşik TOPKDV değerinden örtük oranı tahmin et
+  if (kdvOranTutarlari.length === 0 && toplamTutar) {
+    const combinedKdv = findCombinedVat(rawText)
+    if (combinedKdv !== undefined) {
+      const rate = inferVatRateBucket(toplamTutar.value, combinedKdv)
+      if (rate !== undefined) {
+        kdvOranTutarlari = [{ oran: rate, matrah: round2(toplamTutar.value - combinedKdv), tutar: combinedKdv }]
+      }
+    }
+  }
+
   return {
     rawText,
     firmaAdi: findCompanyName(rawText),
@@ -227,8 +278,8 @@ export function parseReceiptText(rawText: string): OcrResult {
     belgeNo: findBelgeNo(rawText),
     tarih: findDate(rawText),
     saat: findTime(rawText),
-    toplamTutar: findTotal(rawText),
+    toplamTutar,
     odemeYontemi: findPaymentMethod(rawText),
-    kdvOranTutarlari: findVatBreakdown(rawText),
+    kdvOranTutarlari,
   }
 }

@@ -195,7 +195,8 @@ export function ReceiptFormPage() {
       meta.odemeYontemi = 'high'
     }
     for (const item of result.kdvOranTutarlari) {
-      const { matrah, tutar } = calcFromInclusive(item.dahilTutar, item.oran / 100)
+      const matrah = item.matrah ?? calcFromInclusive(item.dahilTutar!, item.oran / 100).matrah
+      const tutar = item.tutar ?? calcFromInclusive(item.dahilTutar!, item.oran / 100).tutar
       if (item.oran === 1) setKdv1({ matrah, tutar })
       if (item.oran === 10) setKdv10({ matrah, tutar })
       if (item.oran === 20) setKdv20({ matrah, tutar })
