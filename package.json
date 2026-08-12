@@ -1,0 +1,9 @@
+{
+  "name": "fis-defteri",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Fiş fotoğraflarını yapay zeka ile okuyup kaydeden, muhasebe takibi yapan kişisel defter.",
+  "engines": {
+    "node": ">=18"
+  }
+}

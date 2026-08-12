@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Fiş Defteri</title>
+<meta name="description" content="Fiş fotoğraflarını yapay zeka ile okuyup kaydeden, muhasebe takibi yapan kişisel defter.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="app">
+
+  <header class="app-header">
+    <div class="app-header-title">
+      <span class="app-logo">🧾</span>
+      <h1>Fiş Defteri</h1>
+    </div>
+    <p class="app-tagline">fişleri oku, kaydet, muhasebeye ilet</p>
+  </header>
+
+  <section class="summary-grid" aria-label="Özet">
+    <div class="summary-card">
+      <span class="summary-label">Toplam Fiş</span>
+      <span class="summary-value" id="sumTotal">₺0,00</span>
+    </div>
+    <div class="summary-card">
+      <span class="summary-label">Toplam KDV</span>
+      <span class="summary-value" id="sumVat">₺0,00</span>
+    </div>
+    <div class="summary-card summary-card--warn">
+      <span class="summary-label">İletilmedi</span>
+      <span class="summary-value" id="sumPending">₺0,00</span>
+    </div>
+    <div class="summary-card">
+      <span class="summary-label">Adet</span>
+      <span class="summary-value" id="sumCount">0</span>
+    </div>
+  </section>
+
+  <section class="actions">
+    <label class="btn btn-primary" for="cameraInput">
+      <span class="btn-icon">📷</span> Fotoğraf Çek
+      <input type="file" accept="image/*" capture="environment" id="cameraInput" hidden>
+    </label>
+    <label class="btn btn-primary" for="galleryInput">
+      <span class="btn-icon">🖼️</span> Galeriden Seç
+      <input type="file" accept="image/*" id="galleryInput" hidden>
+    </label>
+    <button class="btn btn-ghost" id="manualAddBtn" type="button">
+      <span class="btn-icon">✍️</span> Elle Ekle
+    </button>
+    <button class="btn btn-ghost" id="exportBtn" type="button">
+      <span class="btn-icon">⬇️</span> Yedek Al
+    </button>
+    <label class="btn btn-ghost" for="importInput">
+      <span class="btn-icon">⬆️</span> Yedek Geri Yükle
+      <input type="file" accept="application/json,.json" id="importInput" hidden>
+    </label>
+  </section>
+
+  <section class="filters" id="filters" role="tablist" aria-label="Filtre">
+    <button class="filter-btn active" data-filter="all" type="button">Tümü</button>
+    <button class="filter-btn" data-filter="pending" type="button">İletilmedi</button>
+    <button class="filter-btn" data-filter="done" type="button">İletildi</button>
+  </section>
+
+  <section class="receipt-list" id="receiptList"></section>
+
+  <p class="empty-state" id="emptyState" hidden>Henüz fiş yok. Yukarıdan bir fotoğraf ekleyerek başla.</p>
+
+</div>
+
+<div class="modal-overlay" id="modalOverlay" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="modal-header">
+      <h2 id="modalTitle">Yeni Fiş</h2>
+      <button class="modal-close" id="modalCloseBtn" type="button" aria-label="Kapat">✕</button>
+    </div>
+
+    <div class="modal-notice" id="modalNotice" hidden></div>
+
+    <form id="receiptForm" class="receipt-form">
+      <input type="hidden" id="fId">
+
+      <label class="field">
+        <span>Satıcı</span>
+        <input type="text" id="fSatici" required placeholder="İşletme adı">
+      </label>
+
+      <label class="field">
+        <span>Vergi No (VKN)</span>
+        <input type="text" id="fVergiNo" placeholder="varsa">
+      </label>
+
+      <div class="field-row">
+        <label class="field">
+          <span>Tarih</span>
+          <input type="date" id="fTarih" required>
+        </label>
+        <label class="field">
+          <span>Tutar (KDV dahil)</span>
+          <input type="number" id="fTutar" step="0.01" min="0" required placeholder="0.00">
+        </label>
+      </div>
+
+      <div class="field-row field-row--3">
+        <label class="field">
+          <span>KDV %1</span>
+          <input type="number" id="fKdv1" step="0.01" min="0" placeholder="—">
+        </label>
+        <label class="field">
+          <span>KDV %10</span>
+          <input type="number" id="fKdv10" step="0.01" min="0" placeholder="—">
+        </label>
+        <label class="field">
+          <span>KDV %20</span>
+          <input type="number" id="fKdv20" step="0.01" min="0" placeholder="—">
+        </label>
+      </div>
+
+      <label class="field">
+        <span>Kategori</span>
+        <select id="fKategori">
+          <option>Yakıt</option>
+          <option>Market</option>
+          <option>Yemek</option>
+          <option>Ofis Malzemesi</option>
+          <option>Kırtasiye</option>
+          <option>Diğer</option>
+        </select>
+      </label>
+
+      <div class="field-row">
+        <label class="field">
+          <span>Müşteri</span>
+          <input type="text" id="fMusteri" placeholder="opsiyonel">
+        </label>
+        <label class="field">
+          <span>Ödeme Yöntemi</span>
+          <select id="fOdemeYontemi">
+            <option>Nakit</option>
+            <option>Kredi Kartı</option>
+            <option>Banka Kartı</option>
+            <option>Havale/EFT</option>
+            <option>Diğer</option>
+          </select>
+        </label>
+      </div>
+
+      <label class="field field-checkbox">
+        <input type="checkbox" id="fIslendi">
+        <span>Muhasebeye iletildi</span>
+      </label>
+
+      <div class="modal-actions">
+        <button type="button" class="btn btn-danger" id="deleteBtn" hidden>Sil</button>
+        <div class="modal-actions-right">
+          <button type="button" class="btn btn-ghost" id="cancelBtn">İptal</button>
+          <button type="submit" class="btn btn-primary">Kaydet</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="loading-overlay" id="loadingOverlay" hidden>
+  <div class="loading-box">
+    <div class="spinner"></div>
+    <p>Fiş okunuyor…</p>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="js/app.js"></script>
+</body>
+</html>
