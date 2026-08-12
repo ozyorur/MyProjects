@@ -67,15 +67,35 @@ export async function terminateOcrWorker(): Promise<void> {
   }
 }
 
+interface OcrLine {
+  text: string
+  confidence: number
+}
+
+/** Tesseract'ın blok/paragraf/satır ağacını okuma sırasına göre düz bir satır listesine indirger */
+function extractLines(page: { blocks: { paragraphs: { lines: { text: string; confidence: number }[] }[] }[] | null }): OcrLine[] {
+  const lines: OcrLine[] = []
+  for (const block of page.blocks ?? []) {
+    for (const para of block.paragraphs ?? []) {
+      for (const line of para.lines ?? []) {
+        const trimmed = line.text.trim()
+        if (trimmed) lines.push({ text: trimmed, confidence: line.confidence })
+      }
+    }
+  }
+  return lines
+}
+
 export async function runOcr(image: Blob | string, onProgress?: (pct: number) => void): Promise<OcrResult> {
   const worker = await getWorker(onProgress)
   // Fişler dar, tek sütunluk metin şeritleridir; SINGLE_COLUMN modu Tesseract'ın
   // arka plan gürültüsünü sütun/blok olarak yanlış yorumlamasını engelleyip doğruluğu artırır.
   await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_COLUMN })
-  const { data } = await worker.recognize(image, {}, { text: true })
+  const { data } = await worker.recognize(image, {}, { text: true, blocks: true })
   onProgress?.(100)
   const text = data.text || ''
-  return parseReceiptText(text)
+  const lines = extractLines(data)
+  return parseReceiptText(text, lines)
 }
 
 // ---- Parsing helpers ----
@@ -196,21 +216,36 @@ function isPlausibleText(line: string): boolean {
   return true
 }
 
-function findCompanyName(text: string): OcrExtractedField<string> | undefined {
+function isCompanyNameCandidate(line: string): boolean {
+  const digitRatio = (line.match(/\d/g)?.length ?? 0) / line.length
+  return (
+    digitRatio < 0.3 &&
+    line.length >= 3 &&
+    line.length <= 60 &&
+    !/^(FİŞ|FIS|SAAT|TARİH|TARIH)/i.test(line) &&
+    isPlausibleText(line)
+  )
+}
+
+function findCompanyName(text: string, ocrLines?: OcrLine[]): OcrExtractedField<string> | undefined {
+  // Tesseract'ın satır bazlı güven skorları varsa: ilk birkaç satır arasından yalnızca
+  // "en güvenilir" olanı seç — başlık her zaman ilk satır olmayabilir ve stilize firma
+  // logoları genelde en düşük güven skoruna sahip olur.
+  if (ocrLines && ocrLines.length > 0) {
+    const candidates = ocrLines.slice(0, 8).filter((l) => isCompanyNameCandidate(l.text))
+    if (candidates.length > 0) {
+      const best = candidates.reduce((a, b) => (b.confidence > a.confidence ? b : a))
+      return { value: best.text, confidence: best.confidence >= 75 ? 'high' : 'low' }
+    }
+  }
+
+  // Güven skoru mevcut değilse (ör. eski çağrılar), düz metinden ilk uygun satırı kullan
   const lines = text
     .split('\n')
     .map((l) => l.trim())
     .filter((l) => l.length > 2)
-  // İlk birkaç satırda genelde firma adı bulunur; çok sayıda rakam içeren veya anlamsız satırları ele
   for (const line of lines.slice(0, 6)) {
-    const digitRatio = (line.match(/\d/g)?.length ?? 0) / line.length
-    if (
-      digitRatio < 0.3 &&
-      line.length >= 3 &&
-      line.length <= 60 &&
-      !/^(FİŞ|FIS|SAAT|TARİH|TARIH)/i.test(line) &&
-      isPlausibleText(line)
-    ) {
+    if (isCompanyNameCandidate(line)) {
       return { value: line, confidence: 'low' }
     }
   }
@@ -255,7 +290,7 @@ function inferVatRateBucket(toplam: number, kdv: number): 1 | 10 | 20 | undefine
   return bestDiff <= 2.5 ? best : undefined
 }
 
-export function parseReceiptText(rawText: string): OcrResult {
+export function parseReceiptText(rawText: string, ocrLines?: OcrLine[]): OcrResult {
   const toplamTutar = findTotal(rawText)
   let kdvOranTutarlari = findVatBreakdown(rawText)
 
@@ -272,7 +307,7 @@ export function parseReceiptText(rawText: string): OcrResult {
 
   return {
     rawText,
-    firmaAdi: findCompanyName(rawText),
+    firmaAdi: findCompanyName(rawText, ocrLines),
     vergiNo: findVergiNo(rawText),
     fisNo: findFisNo(rawText),
     belgeNo: findBelgeNo(rawText),
