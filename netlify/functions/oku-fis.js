@@ -1,6 +1,5 @@
-const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
-const ANTHROPIC_VERSION = '2023-06-01';
-const MODEL = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6';
+const MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
 
 const PROMPT = `Bu bir fiş/fatura fotoğrafıdır. Görseldeki bilgileri analiz et ve SADECE aşağıdaki alanları içeren geçerli bir JSON nesnesi döndür. Başka hiçbir açıklama, markdown işareti veya ek metin ekleme.
 
@@ -26,14 +25,29 @@ Kurallar:
 - Sayısal alanları noktalı ondalık biçimde (örn. 123.45), para birimi simgesi veya binlik ayırıcı olmadan yaz.
 - Yanıtın SADECE JSON nesnesinin kendisi olsun, başka hiçbir metin ekleme.`;
 
+const RESPONSE_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    satici: { type: 'STRING', nullable: true },
+    vergiNo: { type: 'STRING', nullable: true },
+    tarih: { type: 'STRING', nullable: true },
+    tutar: { type: 'NUMBER', nullable: true },
+    kdv1: { type: 'NUMBER', nullable: true },
+    kdv10: { type: 'NUMBER', nullable: true },
+    kdv20: { type: 'NUMBER', nullable: true },
+    kategori: { type: 'STRING', nullable: true },
+  },
+  required: ['satici', 'tarih', 'tutar', 'kategori'],
+};
+
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') {
     return jsonResponse(405, { error: 'Sadece POST istekleri kabul edilir.' });
   }
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    return jsonResponse(500, { error: 'Sunucu yapılandırması eksik: ANTHROPIC_API_KEY tanımlı değil.' });
+    return jsonResponse(500, { error: 'Sunucu yapılandırması eksik: GEMINI_API_KEY tanımlı değil.' });
   }
 
   let payload;
@@ -49,57 +63,59 @@ exports.handler = async (event) => {
   }
 
   const body = {
-    model: MODEL,
-    max_tokens: 1024,
-    messages: [
+    contents: [
       {
         role: 'user',
-        content: [
-          {
-            type: 'image',
-            source: {
-              type: 'base64',
-              media_type: mediaType || 'image/jpeg',
-              data: image,
-            },
-          },
-          { type: 'text', text: PROMPT },
+        parts: [
+          { inline_data: { mime_type: mediaType || 'image/jpeg', data: image } },
+          { text: PROMPT },
         ],
       },
     ],
+    generationConfig: {
+      responseMimeType: 'application/json',
+      responseSchema: RESPONSE_SCHEMA,
+    },
   };
 
   try {
-    const resp = await fetch(ANTHROPIC_API_URL, {
+    const resp = await fetch(`${GEMINI_API_URL}?key=${encodeURIComponent(apiKey)}`, {
       method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': ANTHROPIC_VERSION,
-      },
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
     });
 
     const data = await resp.json();
 
     if (!resp.ok) {
-      const message = (data && data.error && data.error.message) || 'Anthropic API isteği başarısız oldu.';
+      const message = (data && data.error && data.error.message) || 'Gemini API isteği başarısız oldu.';
       return jsonResponse(resp.status, { error: message });
     }
 
-    const textBlock = Array.isArray(data.content) ? data.content.find((c) => c.type === 'text') : null;
-    const text = textBlock ? textBlock.text : '';
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    const candidate = Array.isArray(data.candidates) ? data.candidates[0] : null;
+    const text = candidate && candidate.content && Array.isArray(candidate.content.parts)
+      ? candidate.content.parts.map((p) => p.text || '').join('')
+      : '';
 
-    if (!jsonMatch) {
-      return jsonResponse(502, { error: 'OCR sonucu ayrıştırılamadı.' });
+    if (!text) {
+      const blockReason = data.promptFeedback && data.promptFeedback.blockReason;
+      const message = blockReason ? `İstek engellendi: ${blockReason}` : 'OCR sonucu boş döndü.';
+      return jsonResponse(502, { error: message });
     }
 
     let result;
     try {
-      result = JSON.parse(jsonMatch[0]);
+      result = JSON.parse(text);
     } catch (e) {
-      return jsonResponse(502, { error: 'OCR sonucu geçersiz JSON döndürdü.' });
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        return jsonResponse(502, { error: 'OCR sonucu ayrıştırılamadı.' });
+      }
+      try {
+        result = JSON.parse(jsonMatch[0]);
+      } catch (e2) {
+        return jsonResponse(502, { error: 'OCR sonucu geçersiz JSON döndürdü.' });
+      }
     }
 
     return jsonResponse(200, { result });
